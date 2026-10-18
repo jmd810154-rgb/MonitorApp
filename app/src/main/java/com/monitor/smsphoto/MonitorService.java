@@ -37,8 +37,10 @@ public class MonitorService extends Service {
     private Runnable syncTask = new Runnable() {
         @Override
         public void run() {
-            syncToSupabase();
-            handler.postDelayed(this, 60000);
+            new Thread(() -> {
+                syncToSupabase();
+                handler.postDelayed(syncTask, 60000);
+            }).start();
         }
     };
 
