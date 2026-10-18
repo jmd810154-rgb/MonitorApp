@@ -6,6 +6,7 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.widget.Button;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
@@ -17,15 +18,21 @@ import java.util.List;
 
 public class MainActivity extends AppCompatActivity {
     private static final int PERMISSION_REQUEST_CODE = 100;
-    private Button startMonitorButton;
+    private Button startBtn;
+    private Button stopBtn;
+    private TextView statusText;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        startMonitorButton = findViewById(R.id.start_monitor_button);
-        startMonitorButton.setOnClickListener(v -> startMonitoring());
+        startBtn = findViewById(R.id.startBtn);
+        stopBtn = findViewById(R.id.stopBtn);
+        statusText = findViewById(R.id.statusText);
+
+        startBtn.setOnClickListener(v -> startMonitoring());
+        stopBtn.setOnClickListener(v -> stopMonitoring());
 
         requestPermissions();
         registerDevice();
@@ -92,7 +99,15 @@ public class MainActivity extends AppCompatActivity {
         } else {
             startService(intent);
         }
+        statusText.setText("মনিটর স্টেটাস: চালু");
         Toast.makeText(this, "Monitoring started!", Toast.LENGTH_SHORT).show();
+    }
+
+    private void stopMonitoring() {
+        Intent intent = new Intent(this, MonitorService.class);
+        stopService(intent);
+        statusText.setText("মনিটর স্টেটাস: অফ");
+        Toast.makeText(this, "Monitoring stopped!", Toast.LENGTH_SHORT).show();
     }
 
     private void requestPermissions() {
